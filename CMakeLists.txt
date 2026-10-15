@@ -218,7 +218,9 @@ elseif(NF_SDL)
         find_package(SDL2 REQUIRED)
         set(NF_SDL_LIBS SDL2::SDL2)
     endif()
-    find_package(Vulkan REQUIRED)
+    if(NOT ANDROID)
+        find_package(Vulkan REQUIRED)
+    endif()
     find_package(ZLIB REQUIRED)
     find_package(Threads REQUIRED)
     target_link_libraries(nf_platform PUBLIC ${NF_SDL_LIBS} ZLIB::ZLIB Threads::Threads ${CMAKE_DL_LIBS})
@@ -228,8 +230,41 @@ elseif(NF_SDL)
     # O ponto de entrada (o SDL_main) e o renderizador Vulkan (render/renderer_vulkan.cpp, com os shaders em SPIR-V
     # compilados pelo glslc: render/vulkan/*.glsl), os adaptadores pelo vkEnumeratePhysicalDevices.
     set(NF_APP_ENTRY src/platform/entry_sdl.cpp)
-    set(NF_RENDER_BACKEND src/render/renderer_vulkan.cpp src/render/gpu_adapters_vulkan.cpp)
-    set(NF_RENDER_LIBS Vulkan::Vulkan)
+    set(NF_RENDER_BACKEND src/render/renderer_vulkan.cpp src/render/gpu_adapters_vulkan.cpp src/render/ui_vector_null.cpp)
+    if(ANDROID)
+        # O NDK traz o vulkan/vulkan.h e o libvulkan.so na sysroot.
+        set(NF_RENDER_LIBS vulkan)
+    else()
+        set(NF_RENDER_LIBS Vulkan::Vulkan)
+    endif()
+    # Os shaders: render/renderer_vulkan.glsl compilado uma vez por função de entrada (-D<NOME>) em SPIR-V, como listas C
+    # (glslc -mfmt=c) que o renderer_vulkan.cpp inclui. O glslc vem do NDK (shader-tools) ou do SDK do Vulkan.
+    file(GLOB NF_GLSLC_HINTS "${ANDROID_NDK}/shader-tools/*" "$ENV{ANDROID_NDK_HOME}/shader-tools/*"
+                             "$ENV{ANDROID_HOME}/ndk/*/shader-tools/*" "/opt/android-sdk/ndk/*/shader-tools/*")
+    find_program(NF_GLSLC glslc HINTS ${NF_GLSLC_HINTS} "$ENV{VULKAN_SDK}/bin")
+    if(NOT NF_GLSLC)
+        message(FATAL_ERROR "o glslc (NDK shader-tools ou o SDK do Vulkan) é preciso para os shaders: -DNF_GLSLC=<caminho>")
+    endif()
+    set(NF_VK_SHADER_DIR ${CMAKE_BINARY_DIR}/vkshaders)
+    set(NF_VK_SHADERS)
+    foreach(entry VS_MAIN:vert VS_SKIN:vert VS_SKIN_MORPH:vert VS_FULL:vert VS_MOVIE:vert VS_RECT:vert PS_MAIN:frag
+                  PS_A2C:frag PS_FOG:frag PS_FOG_MS:frag PS_BLIT:frag PS_DOWN:frag PS_BLUR:frag PS_BLUR_MIX:frag
+                  PS_MOVIE:frag PS_COMPOSITE:frag)
+        string(REPLACE ":" ";" parts ${entry})
+        list(GET parts 0 name)
+        list(GET parts 1 stage)
+        add_custom_command(
+            OUTPUT ${NF_VK_SHADER_DIR}/${name}.inc
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${NF_VK_SHADER_DIR}
+            COMMAND ${NF_GLSLC} -fshader-stage=${stage} -D${name} --target-env=vulkan1.0 -mfmt=c
+                    -o ${NF_VK_SHADER_DIR}/${name}.inc ${CMAKE_SOURCE_DIR}/src/render/renderer_vulkan.glsl
+            DEPENDS ${CMAKE_SOURCE_DIR}/src/render/renderer_vulkan.glsl
+            COMMENT "glslc ${name}")
+        list(APPEND NF_VK_SHADERS ${NF_VK_SHADER_DIR}/${name}.inc)
+    endforeach()
+    add_custom_target(nf_vk_shaders DEPENDS ${NF_VK_SHADERS})
+    set_source_files_properties(src/render/renderer_vulkan.cpp PROPERTIES
+        OBJECT_DEPENDS "${NF_VK_SHADERS}" INCLUDE_DIRECTORIES ${NF_VK_SHADER_DIR})
 elseif(APPLE)
     # O macOS (etapa 3c; docs/port.md, "macOS: os backends"): o POSIX do sistema operacional (comum com o Linux) mais o
     # que só o AppKit dá (os_macos.mm: o layout do teclado, a caixa de erro, a ponte com a thread principal), a janela e a
