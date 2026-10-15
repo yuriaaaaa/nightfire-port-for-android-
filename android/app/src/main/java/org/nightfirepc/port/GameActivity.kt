@@ -37,7 +37,15 @@ class GameActivity : SDLActivity(), SensorEventListener {
     private var lastGyroNs = 0L
     private var menu: AlertDialog? = null
 
-    override fun getLibraries() = arrayOf("c++_shared", "SDL2", "main")
+    // O SDL2 e o libc++ estão dentro da libmain.so (CMakeLists.txt).
+    override fun getLibraries() = arrayOf("main")
+
+    // Antes do System.loadLibrary("main") do SDL: o carregador abre a libmain.so no começo de uma reserva de 4 GB
+    // (NativeLoader); o loadLibrary do SDL acha a mesma biblioteca já aberta e o ART chama o JNI_OnLoad dela.
+    override fun loadLibraries() {
+        NativeLoader.preload()
+        super.loadLibraries()
+    }
 
     override fun getArguments(): Array<String> {
         val disc = intent.getStringExtra(EXTRA_DISC) ?: return emptyArray()
@@ -51,6 +59,7 @@ class GameActivity : SDLActivity(), SensorEventListener {
             Paths.root().mkdirs()
             Os.setenv("NF_FILES_DIR", Paths.root().absolutePath, true)
             Os.setenv("NF_LOG_FILE", Paths.newLogFile().absolutePath, true)
+            Paths.markRunning()
         } catch (e: Exception) {
             android.util.Log.w("Nightfire", "setenv: $e")
         }
@@ -211,6 +220,7 @@ class GameActivity : SDLActivity(), SensorEventListener {
     private fun quit() {
         // O jogo grava as opções e os saves na hora; sair encerra o processo (o jogo tem estado estático, como o
         // SDL_main faz quando volta).
+        Paths.clearRunning()
         finishAndRemoveTask()
         android.os.Process.killProcess(android.os.Process.myPid())
     }

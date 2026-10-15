@@ -11,8 +11,8 @@ android {
         applicationId = "org.nightfirepc.port"
         minSdk = 26
         targetSdk = 35
-        versionCode = System.getenv("NF_VERSION_CODE")?.toIntOrNull() ?: 1
-        versionName = System.getenv("NF_VERSION_NAME") ?: "0.1.0"
+        versionCode = System.getenv("NF_VERSION_CODE")?.toIntOrNull() ?: 2
+        versionName = System.getenv("NF_VERSION_NAME") ?: "0.1.1"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

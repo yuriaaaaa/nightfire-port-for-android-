@@ -209,11 +209,15 @@ elseif(NF_SDL)
         if(NOT NF_SDL2_SOURCE)
             message(FATAL_ERROR "Android: -DNF_SDL2_SOURCE=<a pasta da fonte do SDL2> (o android/build.sh baixa)")
         endif()
-        set(SDL_SHARED ON CACHE BOOL "" FORCE)
-        set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+        # O SDL2 estático, dentro da libmain.so, com o libc++ estático (-DANDROID_STL=c++_static, android/build.sh): um
+        # só libc++ no jogo, o que usa o operator new do port (platform/arena_new.cpp). Com o libc++_shared as funções
+        # da std::string e do std::filesystem que ficam fora de linha alocavam pelo malloc dele e liberavam o que a
+        # arena deu (e o contrário): no Android a libmain.so não substitui o operator new das outras bibliotecas.
+        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+        set(SDL_STATIC ON CACHE BOOL "" FORCE)
         set(SDL_TEST OFF CACHE BOOL "" FORCE)
         add_subdirectory(${NF_SDL2_SOURCE} ${CMAKE_BINARY_DIR}/sdl2 EXCLUDE_FROM_ALL)
-        set(NF_SDL_LIBS SDL2::SDL2)
+        set(NF_SDL_LIBS SDL2::SDL2-static)
     else()
         find_package(SDL2 REQUIRED)
         set(NF_SDL_LIBS SDL2::SDL2)
@@ -565,6 +569,15 @@ add_library(nightfire SHARED
     src/platform/jni_android.cpp
 )
 set_target_properties(nightfire PROPERTIES OUTPUT_NAME main)
+# O SDL2 inteiro (o JNI_OnLoad e as funções nativas que o Java do SDL procura pelo nome, que nada no jogo chama).
+target_link_libraries(nightfire PRIVATE -Wl,--whole-archive $<TARGET_FILE:SDL2-static> -Wl,--no-whole-archive)
+add_dependencies(nightfire SDL2-static)
+# As chamadas de dentro da libmain.so ficam nela (o operator new da arena antes de tudo, também o do libc++ estático),
+# qualquer que seja a ordem de busca de símbolos do carregador do Android.
+target_link_options(nightfire PRIVATE -Wl,-Bsymbolic-functions)
+# O carregador que abre a libmain.so no começo de uma reserva de 4 GB (platform/nfload_android.cpp).
+add_library(nfload SHARED src/platform/nfload_android.cpp)
+target_link_libraries(nfload PRIVATE log dl)
 elseif(NOT NF_HEADLESS)
 add_executable(nightfire WIN32
     ${NF_APP_SOURCES}

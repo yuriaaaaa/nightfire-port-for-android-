@@ -123,6 +123,7 @@ class LauncherActivity : Activity() {
         if (ok) {
             Paths.root().mkdirs()
             Paths.logs().mkdirs()
+            checkLastRun()
         }
         val disc = if (ok) Paths.disc(this) else null
         discText.text = when {
@@ -132,6 +133,17 @@ class LauncherActivity : Activity() {
         }
         playButton.isEnabled = ok && disc != null
         playButton.alpha = if (playButton.isEnabled) 1f else 0.4f
+    }
+
+    // A última partida caiu (a marca de GameActivity ficou): guarda o logcat dela ao lado do nightfire.log.
+    private fun checkLastRun() {
+        Thread {
+            val f = Paths.saveLogcatAfterCrash() ?: return@Thread
+            runOnUiThread {
+                Toast.makeText(this, "The last game stopped. Logs saved in Internal storage/Nightfire/logs " +
+                    "(nightfire.log and ${f.name}).", Toast.LENGTH_LONG).show()
+            }
+        }.start()
     }
 
     private fun pick(kind: Int) {

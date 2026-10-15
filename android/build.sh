@@ -56,18 +56,18 @@ BUILD="$HERE/build/native-$ABI"
 echo "==> Jogo e SDL2 ($ABI, NDK)"
 cmake -S "$ROOT" -B "$BUILD" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
-    -DANDROID_ABI="$ABI" -DANDROID_PLATFORM=android-26 -DANDROID_STL=c++_shared \
+    -DANDROID_ABI="$ABI" -DANDROID_PLATFORM=android-26 -DANDROID_STL=c++_static \
     -DCMAKE_BUILD_TYPE=Release -DNF_SDL2_SOURCE="$DEPS/SDL2" \
     -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384"
-cmake --build "$BUILD" --target nightfire SDL2
+cmake --build "$BUILD" --target nightfire nfload
 JNI="$HERE/app/src/main/jniLibs/$ABI"
 mkdir -p "$JNI"
 STRIP="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
 # As tabelas de linha ficam em build/native-*/libmain.so (o relatório de falha dá módulo+deslocamento).
 "$STRIP" --strip-debug -o "$JNI/libmain.so" "$BUILD/libmain.so"
-"$STRIP" --strip-debug -o "$JNI/libSDL2.so" "$(find "$BUILD/sdl2" -name 'libSDL2.so' | head -1)"
-# O libc++ compartilhado: o SDL2 tem partes em C++ (hidapi) e exportaria as do libc++ estático dele para o jogo.
-cp "$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$JNI/"
+"$STRIP" --strip-debug -o "$JNI/libnfload.so" "$BUILD/libnfload.so"
+# O SDL2 e o libc++ estão dentro da libmain.so (CMakeLists.txt); as cópias de uma build antiga saem.
+rm -f "$JNI/libSDL2.so" "$JNI/libc++_shared.so"
 echo "bibliotecas em $JNI"
 [ "$NATIVE_ONLY" = 1 ] && exit 0
 

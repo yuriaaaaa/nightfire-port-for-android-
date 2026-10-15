@@ -66,7 +66,11 @@ extern "C" int SDL_main(int argc, char* argv[]) {
     SDL_Quit();
 #if defined(__ANDROID__)
     // O SDLActivity termina a Activity quando o SDL_main volta; o processo pode continuar vivo para a próxima partida, e
-    // o jogo tem estado estático: sai de vez.
+    // o jogo tem estado estático: sai de vez. Antes, apaga a marca de partida em andamento do lançador (Paths.kt): o
+    // jogo terminou por conta própria, não caiu.
+    if (const char* files = std::getenv("NF_FILES_DIR"); files != nullptr && *files == '/') {
+        unlink((std::string(files) + "/logs/.running").c_str());
+    }
     std::_Exit(code);
 #endif
     return code;

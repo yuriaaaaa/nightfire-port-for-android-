@@ -480,6 +480,10 @@ void vm_free(void* p) {
     g_vm_lock.unlock();
 }
 
+#if defined(__ANDROID__)
+extern "C" char _end;
+#endif
+
 uintptr_t image_end() {
     // O fim do último segmento do executável (o fim do .bss no Linux, o do __LINKEDIT no macOS).
     uintptr_t end = 0;
@@ -523,6 +527,12 @@ uintptr_t image_end() {
             return 1;
         },
         &end);
+#if defined(__ANDROID__)
+    // O fim do .bss da libmain.so pelo símbolo do linker, caso o dl_iterate_phdr ainda não a liste (a arena pode
+    // começar num construtor estático, durante o próprio dlopen).
+    const uintptr_t bss_end = reinterpret_cast<uintptr_t>(&_end);
+    if (bss_end > end) end = bss_end;
+#endif
 #endif
     const uintptr_t page = uintptr_t(sysconf(_SC_PAGESIZE));
     return (end + page - 1) & ~(page - 1);
@@ -578,7 +588,52 @@ void for_each_mapping(uintptr_t from, F&& fn) {
 }
 }  // namespace
 
+#if defined(__ANDROID__)
+namespace {
+// A região que o carregador do lançador reservou antes de abrir a libmain.so (android/app/src/main/cpp/nfload.cpp):
+// a biblioteca no começo, o resto da janela de 4 GB vazio e já reservado (PROT_NONE). NF_ARENA_RESERVED = "lo-hi" em
+// hexadecimal. Lida sem alocar: a arena chama isto de dentro do primeiro operator new, que pode vir de um construtor
+// estático durante o próprio dlopen.
+bool prereserved(uintptr_t* lo, uintptr_t* hi) {
+    static int state = 0;  // 0 não lido, 1 há, 2 não há
+    static uintptr_t r_lo = 0, r_hi = 0;
+    if (state == 0) {
+        state = 2;
+        const char* v = std::getenv("NF_ARENA_RESERVED");
+        if (v != nullptr) {
+            char* dash = nullptr;
+            const uintptr_t a = uintptr_t(std::strtoull(v, &dash, 16));
+            if (dash != nullptr && *dash == '-') {
+                const uintptr_t b = uintptr_t(std::strtoull(dash + 1, nullptr, 16));
+                if (b > a) {
+                    r_lo = a;
+                    r_hi = b;
+                    state = 1;
+                }
+            }
+        }
+    }
+    *lo = r_lo;
+    *hi = r_hi;
+    return state == 1;
+}
+}  // namespace
+#endif
+
 bool vm_largest_free(uintptr_t from, uintptr_t to, uintptr_t align, uintptr_t* base, uintptr_t* size) {
+#if defined(__ANDROID__)
+    // Android: a reserva do carregador conta como livre (é nossa e está vazia depois da imagem).
+    uintptr_t r_lo = 0, r_hi = 0;
+    if (prereserved(&r_lo, &r_hi) && from > r_lo && from < r_hi) {  // a imagem no começo da reserva, a arena depois
+        const uintptr_t lo = (from + align - 1) & ~(align - 1);
+        const uintptr_t hi = std::min(to, r_hi) & ~(align - 1);
+        if (hi > lo) {
+            *base = lo;
+            *size = hi - lo;
+            return true;
+        }
+    }
+#endif
     uintptr_t best = 0, best_size = 0;
     auto gap = [&](uintptr_t lo, uintptr_t hi) {
         if (lo < from) lo = from;
@@ -605,6 +660,10 @@ bool vm_largest_free(uintptr_t from, uintptr_t to, uintptr_t align, uintptr_t* b
 }
 
 bool vm_reserve_at(uintptr_t base, size_t size) {
+#if defined(__ANDROID__)
+    uintptr_t r_lo = 0, r_hi = 0;
+    if (prereserved(&r_lo, &r_hi) && base >= r_lo && base + size <= r_hi) return true;  // já reservada
+#endif
     int flags = MAP_PRIVATE | MAP_ANON;
 #if defined(MAP_NORESERVE)
     flags |= MAP_NORESERVE;

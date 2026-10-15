@@ -118,6 +118,50 @@ object Paths {
         )
     }
 
+    private fun runningMarker(): File = File(logs(), ".running")
+
+    /** Marca que uma partida começou (GameActivity); a próxima abertura do lançador acha a marca e guarda o logcat. */
+    fun markRunning() {
+        try {
+            logs().mkdirs()
+            runningMarker().writeText(System.currentTimeMillis().toString())
+        } catch (e: Exception) {
+        }
+    }
+
+    /**
+     * Se a última partida não terminou pelo menu do lançador (a marca ficou), grava o logcat do app (os registros do
+     * próprio usuário do app, que o Android deixa ler: o motivo de uma queda do processo, a pilha do Java ou a do
+     * código nativo) em logs/logcat-<data>.txt. Devolve o arquivo, ou null.
+     */
+    fun saveLogcatAfterCrash(): File? {
+        val marker = runningMarker()
+        if (!marker.isFile) return null
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+            .format(java.util.Date(marker.lastModified()))
+        marker.delete()
+        val out = File(logs(), "logcat-$stamp.txt")
+        return try {
+            val p = ProcessBuilder("logcat", "-d", "-v", "threadtime", "-b", "main", "-b", "crash")
+                .redirectErrorStream(true).start()
+            out.outputStream().use { p.inputStream.copyTo(it) }
+            p.waitFor()
+            dropOldFiles("logcat-", ".txt")
+            out
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun clearRunning() {
+        runningMarker().delete()
+    }
+
+    private fun dropOldFiles(prefix: String, suffix: String) {
+        logs().listFiles { f -> f.name.startsWith(prefix) && f.name.endsWith(suffix) }
+            ?.sortedByDescending { it.name }?.drop(8)?.forEach { it.delete() }
+    }
+
     /** Guarda os registros antigos (os 8 mais novos) e devolve o caminho do desta partida. */
     fun newLogFile(): File {
         val dir = logs()
