@@ -21,6 +21,7 @@
 
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 
@@ -41,6 +42,12 @@ namespace {
 
 float tick_look_dx = 0.0f;
 float tick_look_dy = 0.0f;
+// Só do port (Android): o olhar pelo toque (o arrasto do lado direito da tela, psiInput_AddTouchLook), em contagens do
+// mouse. Fica fora de detect_device: o aparelho em uso continua o controle virtual, e só o giro soma.
+std::atomic<float> touch_pending_dx{0.0f};
+std::atomic<float> touch_pending_dy{0.0f};
+float tick_touch_dx = 0.0f;
+float tick_touch_dy = 0.0f;
 // A roda: dentes pendentes, e cada dente vira um tick apertado seguido de um solto.
 float wheel_pending[2] = {};
 bool wheel_now[2] = {};
@@ -313,6 +320,7 @@ void map_pc_inputs(PlayerInput_tag* players, uint16_t count) {
             if (g_psi_keyboard_mouse.down[kMouseButtons[i]]) mouse_swallow = uint8_t(mouse_swallow | (1u << i));
         }
         tick_look_dx = tick_look_dy = 0.0f;
+        tick_touch_dx = tick_touch_dy = 0.0f;
     }
     menu_was_open = menu_open;
     // A roda de armas fechou: um botão do mouse apertado com ela aberta (um clique para escolher) não vira tiro.
@@ -342,6 +350,7 @@ void map_pc_inputs(PlayerInput_tag* players, uint16_t count) {
         std::memset(p.actions, 0, sizeof(p.actions));
         clear_port_actions();
         tick_look_dx = tick_look_dy = 0.0f;
+        tick_touch_dx = tick_touch_dy = 0.0f;
         remember_edges(pad);
         return;
     }
@@ -404,6 +413,7 @@ void map_pc_inputs(PlayerInput_tag* players, uint16_t count) {
             if (k != nf::kPortWeaponWheel) port_now[k] = 0.0f;
         }
         tick_look_dx = tick_look_dy = 0.0f;
+        tick_touch_dx = tick_touch_dy = 0.0f;
     }
     remember_edges(pad);
 }
@@ -417,6 +427,9 @@ void map_pc_inputs(PlayerInput_tag* players, uint16_t count) {
 void psiInput_Init() {
     tick_look_dx = 0.0f;
     tick_look_dy = 0.0f;
+    tick_touch_dx = tick_touch_dy = 0.0f;
+    touch_pending_dx.store(0.0f);
+    touch_pending_dy.store(0.0f);
     capture_state = PsiCapture::Idle;
     swallow = false;
     modal = false;
@@ -461,6 +474,8 @@ void psiInput_PollDevices() {
     tick_look_dy = km.active ? km.look_dy : 0.0f;
     km.look_dx = 0.0f;
     km.look_dy = 0.0f;
+    tick_touch_dx = touch_pending_dx.exchange(0.0f);
+    tick_touch_dy = touch_pending_dy.exchange(0.0f);
     float wheel = km.active ? km.wheel : 0.0f;
     km.wheel = 0.0f;
     // Com um menu aberto a roda é do menu (menu_mouse.h), a não ser na captura de uma tecla, que a aceita.
@@ -567,10 +582,16 @@ void psiInput_TakeMouseLook(int player, float* yaw, float* pitch, bool aiming, f
     const nf::ControlsConfig& c = nf::controls();
     float s = psiMouseSensitivity;
     if (aiming) s *= c.mouse_aim_scale / std::max(1.0f, zoom);
-    *yaw = -tick_look_dx * s;
-    *pitch = -tick_look_dy * s * (c.mouse_invert_y ? -1.0f : 1.0f);
+    *yaw = -(tick_look_dx + tick_touch_dx) * s;
+    *pitch = -(tick_look_dy + tick_touch_dy) * s * (c.mouse_invert_y ? -1.0f : 1.0f);
     tick_look_dx = 0.0f;
     tick_look_dy = 0.0f;
+    tick_touch_dx = tick_touch_dy = 0.0f;
+}
+
+void psiInput_AddTouchLook(float dx, float dy) {
+    touch_pending_dx.fetch_add(dx);
+    touch_pending_dy.fetch_add(dy);
 }
 
 void psiInput_PeekMouseLook(int player, float* yaw, float* pitch, bool aiming, float zoom) {

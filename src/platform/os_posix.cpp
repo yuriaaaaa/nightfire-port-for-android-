@@ -157,6 +157,11 @@ std::wstring full_path(const std::wstring& path) {
 }
 
 std::wstring local_data_dir() {
+#if defined(__ANDROID__)
+    // Android: a pasta que o lançador escolhe (NF_FILES_DIR: Internal storage/Nightfire, ou a pasta do aplicativo).
+    const char* dir = std::getenv("NF_FILES_DIR");
+    if (dir != nullptr && *dir == '/') return from_utf8(dir);
+#endif
     // macOS: ~/Library/Application Support; Linux: $XDG_DATA_HOME, senão ~/.local/share (o %LOCALAPPDATA% do Windows).
 #if defined(__APPLE__)
     const char* home = std::getenv("HOME");
@@ -180,6 +185,16 @@ std::wstring user_files_dir(const wchar_t* app) {
     std::wstring dir = base + L'/' + app;
     mkdir(narrow(dir).c_str(), 0755);
     return dir + L'/';
+#elif defined(__ANDROID__)
+    // Android: a pasta do lançador (NF_FILES_DIR); o executável é o app_process do sistema.
+    (void)app;
+    const char* dir = std::getenv("NF_FILES_DIR");
+    if (dir != nullptr && *dir == '/') {
+        std::wstring d = from_utf8(dir);
+        if (d.back() != L'/') d += L'/';
+        return d;
+    }
+    return {};
 #else
     // Linux: ao lado do executável, como no Windows.
     (void)app;
@@ -384,7 +399,7 @@ bool is_optical_drive(const std::wstring& root) {
 // (UCKeyTranslate) e o estado do teclado do sistema vêm de os_macos.mm, com a caixa de erro do NSAlert. Aqui (o Linux e
 // a build headless) nenhum caractere, como no backend nulo (a tabela de teclas usa os nomes dela), e nenhuma tecla segura
 // (o Shift da partida não traz a tela de entrada).
-#if !defined(NF_MACOS_APP)
+#if !defined(NF_MACOS_APP) && !defined(NF_SDL_APP)
 uint32_t key_char(int) { return 0; }
 
 bool key_held(int) { return false; }
@@ -488,16 +503,22 @@ uintptr_t image_end() {
     const uintptr_t slide = reinterpret_cast<uintptr_t>(header) - text_vmaddr;
     end = max_end + slide;
 #else
+    // O objeto que contém a base da janela (o executável no Linux; no Android a libmain.so, que não é o primeiro
+    // objeto da lista: o app_process e as bibliotecas do sistema vêm antes). Entra com a base e sai com o fim.
+    end = reinterpret_cast<uintptr_t>(nf::p32_window_base());
     dl_iterate_phdr(
         [](dl_phdr_info* info, size_t, void* data) -> int {
-            // O primeiro objeto é o executável.
-            uintptr_t top = 0;
+            const uintptr_t base = *static_cast<uintptr_t*>(data);
+            uintptr_t low = UINTPTR_MAX, top = 0;
             for (int i = 0; i < info->dlpi_phnum; ++i) {
                 const auto& ph = info->dlpi_phdr[i];
                 if (ph.p_type != PT_LOAD) continue;
-                const uintptr_t e = uintptr_t(info->dlpi_addr + ph.p_vaddr + ph.p_memsz);
+                const uintptr_t b = uintptr_t(info->dlpi_addr + ph.p_vaddr);
+                const uintptr_t e = b + uintptr_t(ph.p_memsz);
+                if (b < low) low = b;
                 if (e > top) top = e;
             }
+            if (base < low || base >= top) return 0;
             *static_cast<uintptr_t*>(data) = top;
             return 1;
         },
@@ -642,8 +663,9 @@ void console_write_w(const std::wstring& text) { console_write(to_utf8(text)); }
 // Um programa de console aqui sempre tem a saída do terminal que o abriu.
 void attach_parent_console() {}
 
-// A caixa de erro: no programa de janela do macOS o NSAlert (os_macos.mm); aqui o stderr.
-#if !defined(NF_MACOS_APP)
+// A caixa de erro: no programa de janela do macOS o NSAlert (os_macos.mm), no do SDL o SDL_ShowSimpleMessageBox
+// (os_sdl.cpp); aqui o stderr.
+#if !defined(NF_MACOS_APP) && !defined(NF_SDL_APP)
 void show_error(const std::wstring& title, const std::wstring& text) {
     std::fprintf(stderr, "%s: %s\n", to_utf8(title).c_str(), to_utf8(text).c_str());
 }

@@ -27,6 +27,14 @@ option(NF_ARCH64 "Compila a versão de 64 bits (x64) com ponteiros de 32 bits na
 # o nf_driving.exe não entram. No Windows só em 32 bits (a arena de 64 bits precisa de um backend de verdade). build.bat
 # Release headless compila em build\headless\Release.
 option(NF_HEADLESS "Só o código neutro e os testes, com os backends nulos (sem API do sistema)" OFF)
+# O programa de janela do SDL2 com o renderizador Vulkan (docs/android.md): o Android (sempre; o jogo é a biblioteca
+# libmain.so que o SDLActivity do lançador carrega, android/) e o Linux com janela (para testar o Vulkan e o laço numa
+# máquina comum, com o lavapipe do Mesa na CI). O SDL2 do Android vem da fonte (NF_SDL2_SOURCE, que o android/build.sh
+# baixa); o do Linux, do sistema (libsdl2-dev).
+option(NF_SDL "O programa de janela do SDL2 e do Vulkan (Android e Linux)" OFF)
+if(ANDROID)
+    set(NF_SDL ON)
+endif()
 
 # Fora do Windows (etapa 3 do macOS; docs/port.md, "macOS: compilação e CI" e "macOS: os backends"), sempre em 64 bits
 # (o macOS só roda 64 bits). No macOS, sem NF_HEADLESS, o programa de janela (nightfire) com os backends do macOS (a
@@ -36,8 +44,8 @@ option(NF_HEADLESS "Só o código neutro e os testes, com os backends nulos (sem
 # headless (e compila o laço do nightfire sem ligar: nf_app_check). Compiladas pelo clang da Apple e pelo GCC e o clang
 # do Linux na CI (.github/workflows/portable.yml).
 if(NOT WIN32)
-    if(NOT NF_HEADLESS AND NOT APPLE)
-        message(FATAL_ERROR "No Linux, só a build headless: -DNF_HEADLESS=ON (o programa de janela existe no Windows e no macOS).")
+    if(NOT NF_HEADLESS AND NOT APPLE AND NOT NF_SDL)
+        message(FATAL_ERROR "No Linux, a build headless (-DNF_HEADLESS=ON) ou a do SDL2 e do Vulkan (-DNF_SDL=ON).")
     endif()
     if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
         message(FATAL_ERROR "Fora do Windows o port compila em 64 bits (com os ponteiros de 32 bits das estruturas do jogo).")
@@ -112,6 +120,11 @@ else()
         set(CMAKE_OBJCXX_EXTENSIONS OFF)
         add_compile_options($<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
     endif()
+    if(ANDROID)
+        # O NDK chama de erro um printf com formato que não é literal; o código decompilado tem dois (o format_msg de
+        # engine/pickup.cpp e o put de HUD_Describe, engine/hud.cpp), com os formatos das tabelas do jogo.
+        add_compile_options(-Wno-format-security)
+    endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         # Os nomes das funções do executável na pilha do backtrace (crash_report_posix.cpp).
         add_link_options(-rdynamic)
@@ -171,6 +184,52 @@ elseif(NF_HEADLESS)
                                        src/platform/crash_report_posix.cpp)
     find_package(Threads REQUIRED)
     target_link_libraries(nf_platform PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+elseif(NF_SDL)
+    # O SDL2 (o Android e o Linux com janela; docs/android.md): o POSIX do sistema operacional mais a janela, o teclado,
+    # o mouse, os controles (com o controle virtual do toque do Android), o som e a caixa de erro pelo SDL, as imagens
+    # pela zlib, os filmes pelo decodificador do port e o relatório de falhas do Android (o _Unwind_Backtrace e o
+    # logcat; no Linux o do POSIX).
+    target_sources(nf_platform PRIVATE
+        src/platform/os_posix.cpp
+        src/platform/os_sdl.cpp
+        src/platform/window_sdl.cpp
+        src/platform/gamepad_sdl.cpp
+        src/platform/audio_device_sdl.cpp
+        src/platform/image_io_zlib.cpp
+        src/platform/backends_sdl.cpp
+    )
+    if(ANDROID)
+        target_sources(nf_platform PRIVATE src/platform/crash_report_android.cpp)
+    else()
+        target_sources(nf_platform PRIVATE src/platform/crash_report_posix.cpp)
+    endif()
+    # O os_posix.cpp deixa o teclado e a caixa de erro para o os_sdl.cpp.
+    target_compile_definitions(nf_platform PRIVATE NF_SDL_APP=1)
+    if(ANDROID)
+        if(NOT NF_SDL2_SOURCE)
+            message(FATAL_ERROR "Android: -DNF_SDL2_SOURCE=<a pasta da fonte do SDL2> (o android/build.sh baixa)")
+        endif()
+        set(SDL_SHARED ON CACHE BOOL "" FORCE)
+        set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+        set(SDL_TEST OFF CACHE BOOL "" FORCE)
+        add_subdirectory(${NF_SDL2_SOURCE} ${CMAKE_BINARY_DIR}/sdl2 EXCLUDE_FROM_ALL)
+        set(NF_SDL_LIBS SDL2::SDL2)
+    else()
+        find_package(SDL2 REQUIRED)
+        set(NF_SDL_LIBS SDL2::SDL2)
+    endif()
+    find_package(Vulkan REQUIRED)
+    find_package(ZLIB REQUIRED)
+    find_package(Threads REQUIRED)
+    target_link_libraries(nf_platform PUBLIC ${NF_SDL_LIBS} ZLIB::ZLIB Threads::Threads ${CMAKE_DL_LIBS})
+    if(ANDROID)
+        target_link_libraries(nf_platform PUBLIC log android)
+    endif()
+    # O ponto de entrada (o SDL_main) e o renderizador Vulkan (render/renderer_vulkan.cpp, com os shaders em SPIR-V
+    # compilados pelo glslc: render/vulkan/*.glsl), os adaptadores pelo vkEnumeratePhysicalDevices.
+    set(NF_APP_ENTRY src/platform/entry_sdl.cpp)
+    set(NF_RENDER_BACKEND src/render/renderer_vulkan.cpp src/render/gpu_adapters_vulkan.cpp)
+    set(NF_RENDER_LIBS Vulkan::Vulkan)
 elseif(APPLE)
     # O macOS (etapa 3c; docs/port.md, "macOS: os backends"): o POSIX do sistema operacional (comum com o Linux) mais o
     # que só o AppKit dá (os_macos.mm: o layout do teclado, a caixa de erro, a ponte com a thread principal), a janela e a
@@ -461,13 +520,25 @@ set(NF_APP_SOURCES
     src/render/ui_modern_app.cpp
     src/render/setup_app.cpp
 )
-if(NOT NF_HEADLESS)
+if(ANDROID)
+# No Android o jogo é a biblioteca libmain.so que o SDLActivity carrega (o nome que ele procura), com a JNI do lançador.
+add_library(nightfire SHARED
+    ${NF_APP_SOURCES}
+    ${NF_RENDER_BACKEND}
+    ${NF_APP_ENTRY}
+    ${NF_EXE_SOURCES}
+    src/platform/jni_android.cpp
+)
+set_target_properties(nightfire PROPERTIES OUTPUT_NAME main)
+elseif(NOT NF_HEADLESS)
 add_executable(nightfire WIN32
     ${NF_APP_SOURCES}
     ${NF_RENDER_BACKEND}
     ${NF_APP_ENTRY}
     ${NF_EXE_SOURCES}
 )
+endif()
+if(NOT NF_HEADLESS)
 target_link_libraries(nightfire PRIVATE nf_data nf_ui_hd nf_ui_modern nf_frame_interp ${NF_RENDER_LIBS})
 target_compile_definitions(nightfire PRIVATE NF_PORT_BUILD="${NF_GIT_HASH}")
 # A versão de 64 bits grava nightfire64.pdb: no zip de lançamento (tools/make_release.py) as duas ficam na mesma pasta,
@@ -547,8 +618,10 @@ endif()
 # referências), no macOS o Metal, com o ponto de entrada dos programas de janela (o --janela abre uma janela de verdade);
 # no Linux só compilado (uma biblioteca de objetos que nada liga, como o nf_app_check: o GCC e o clang acham os erros
 # antes da rodada do macOS). As cenas do desenho vetorial usam os casos da comparação dele (tests/vector_cases.cpp).
-if(NOT NF_HEADLESS)
-    if(APPLE)
+if(ANDROID)
+    # No Android só o jogo (os testes e as ferramentas rodam no Linux, com a mesma build do SDL e do Vulkan).
+elseif(NOT NF_HEADLESS)
+    if(APPLE OR NF_SDL)
         add_executable(nf_render_check tests/render_conformance.cpp tests/vector_cases.cpp ${NF_RENDER_BACKEND} ${NF_APP_ENTRY}
             ${NF_EXE_SOURCES})
         target_compile_definitions(nf_render_check PRIVATE NF_RENDER_CHECK_APP=1)
@@ -572,6 +645,7 @@ if(APPLE AND NOT NF_HEADLESS)
     target_compile_options(nf_window_smoke PRIVATE ${NF_OPTIONS})
 endif()
 
+if(NOT ANDROID)
 enable_testing()
 add_executable(nf_tests
     tests/test_main.cpp
@@ -710,3 +784,4 @@ add_executable(nf_driving_check tests/driving_check.cpp tests/driving_check_ee.c
     ${NF_EXE_SOURCES})
 target_link_libraries(nf_driving_check PRIVATE nf_data nf_drv)
 target_compile_options(nf_driving_check PRIVATE ${NF_OPTIONS})
+endif()

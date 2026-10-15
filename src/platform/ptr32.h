@@ -47,6 +47,12 @@ extern "C" char __ImageBase;
 // mach_header_64; aqui com outro nome em C++ e o mesmo símbolo, sem trazer os cabeçalhos do sistema).
 extern "C" char nf_mh_execute_header __asm__("__mh_execute_header");
 #define NF_IMAGE_BASE (&nf_mh_execute_header)
+#elif defined(__ANDROID__)
+// O Android: o jogo é uma biblioteca (libmain.so, carregada pelo SDLActivity), não o executável (que é o app_process):
+// o __ehdr_start é o cabeçalho ELF da própria biblioteca, que o lld define em toda saída (o __executable_start ele só
+// define no executável).
+extern "C" char __ehdr_start;
+#define NF_IMAGE_BASE (&__ehdr_start)
 #elif defined(__ELF__)
 // O ld do GNU (e o lld, o gold): o começo do primeiro segmento do executável, o cabeçalho ELF num PIE.
 extern "C" char __executable_start;

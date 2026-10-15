@@ -63,6 +63,11 @@ struct PsiMenuMouse {
 };
 const PsiMenuMouse& psiInput_MenuMouse();
 
+// Só do port (Android): soma ao olhar do jogador 0 o arrasto do toque (em contagens do mouse, já com a sensibilidade
+// do toque), de qualquer thread (a do Java). Entra no próximo tick por psiInput_TakeMouseLook, como o mouse, sem mudar
+// o aparelho em uso (o controle virtual).
+void psiInput_AddTouchLook(float dx, float dy);
+
 void psiInput_Init();
 void psiInput_PollDevices();
 void psiInput_MapInputs(PlayerInput_tag* players, uint16_t count);

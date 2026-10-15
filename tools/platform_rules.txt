@@ -35,6 +35,14 @@ src/*_metal.mm
 src/*_metal.h
 # O desenho vetorial do macOS (CoreGraphics e CoreText; docs/port.md, "macOS: o desenho vetorial").
 src/*_cg.mm
+# O Android e o Linux com janela (docs/android.md): o SDL2 (a janela, a entrada, o som), o Vulkan (o renderizador), a zlib
+# (os PNG) e o que é só do Android (a JNI do lançador, o relatório de falhas com o desenrolador do NDK e o logcat).
+src/*_sdl.cpp
+src/*_sdl.h
+src/*_vulkan.cpp
+src/*_vulkan.h
+src/*_zlib.cpp
+src/*_android.cpp
 # A ferramenta de comparação do desenho vetorial (nf_vector_check): o Direct2D de hoje por trás da interface do macOS, as
 # imagens de referência.
 tests/*_d2d.cpp
@@ -110,6 +118,13 @@ include IOKit/*
 include UniformTypeIdentifiers/*
 include CoreHaptics/*
 include dispatch/*
+# O SDL2, o Vulkan, a zlib e o Android (os backends *_sdl, *_vulkan, *_zlib, *_android).
+include SDL*
+include vulkan/*
+include zlib.h
+include android/*
+include jni.h
+include unwind.h
 # strcasecmp e strncasecmp (crt_compat.h, fora do MSVC).
 include strings.h src/platform/crt_compat.h
 # Os cabeçalhos internos dos backends.
@@ -215,6 +230,12 @@ token dlsym
 token dl_iterate_phdr
 token pthread_*
 token mach_*
+# O SDL2, o Vulkan e o Android.
+token SDL_*
+token Vk*
+token JNIEnv
+token __android_log*
+token _Unwind_*
 token _NSGetExecutablePath
 token dispatch_*
 token CGEvent*
